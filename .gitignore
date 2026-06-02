@@ -1,0 +1,12 @@
+# Binaries
+/cachelet
+*.exe
+
+# Test / coverage output
+*.out
+coverage.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

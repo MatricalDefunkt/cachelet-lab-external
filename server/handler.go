@@ -1,0 +1,57 @@
+package server
+
+import (
+	"errors"
+	"net/http"
+)
+
+// apiHandler is an HTTP handler that returns an error. It is adapted to
+// http.Handler by Server.adapt, which translates the returned error into a
+// response. This keeps individual handlers free of repetitive status-writing
+// boilerplate.
+//
+// Handlers should return one of the sentinel errors below (optionally wrapped
+// with %w) to produce a client-facing status. Any other error is treated as an
+// internal server error and logged.
+type apiHandler func(http.ResponseWriter, *http.Request) error
+
+// middleware wraps an apiHandler with cross-cutting behavior.
+type middleware func(apiHandler) apiHandler
+
+var (
+	errNotFound   = errors.New("not found")
+	errBadRequest = errors.New("bad request")
+)
+
+// statusFor maps a handler error to an HTTP status code.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, errNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, errBadRequest):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// adapt wires a business handler into an http.Handler: it applies the standard
+// middleware chain and translates a returned error into an HTTP response.
+// Cross-cutting behavior (e.g. logging) lives in the middleware listed here, not
+// inline in adapt.
+func (s *Server) adapt(h apiHandler) http.Handler {
+	// Standard middleware chain, applied to every route. Listed outermost
+	// first: the first entry runs before those below it.
+	chain := []middleware{
+		s.logRequests,
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		h = chain[i](h)
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := h(w, r); err != nil {
+			http.Error(w, err.Error(), statusFor(err))
+		}
+	})
+}
