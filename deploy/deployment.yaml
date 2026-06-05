@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cachelet
+  labels:
+    app.kubernetes.io/name: cachelet
+spec:
+  # One replica on purpose: the cache is in-memory and per-pod with no
+  # replication or sharding. Running >1 replica gives each pod an independent
+  # cache, so a key written through one pod is a miss on another. That is
+  # acceptable for a best-effort cache, but scale up only with that in mind.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cachelet
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cachelet
+    spec:
+      # Give the process room to fail readiness, drain, and shut down cleanly.
+      # main.go waits ~5s after SIGTERM before closing the listener, then up to
+      # 5s more for in-flight requests.
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cachelet
+          image: cachelet:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              # Memory request == limit: the cache is unbounded (TTL-only, no max
+              # size), so the limit is the backstop. The pod is OOMKilled before
+              # it can threaten the node, and the guaranteed request keeps it off
+              # an oversubscribed node.
+              memory: 64Mi
+            limits:
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2

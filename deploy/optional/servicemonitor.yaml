@@ -1,0 +1,27 @@
+# ServiceMonitor for Prometheus Operator (kube-prometheus-stack and similar).
+# This is the canonical way to scrape on clusters running the operator.
+#
+# It lives under deploy/optional/ (not deploy/) on purpose: it depends on the
+# monitoring.coreos.com CRDs, and `kubectl apply --dry-run=client -f deploy/`
+# would fail on a cluster without them. `-f deploy/` is non-recursive, so this
+# file is skipped by the default apply. Apply it explicitly on an operator
+# cluster:
+#
+#   kubectl apply -f deploy/optional/servicemonitor.yaml
+#
+# If your cluster uses annotation-based discovery instead, the Service
+# annotations already cover scraping and this file can be left unapplied.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cachelet
+  labels:
+    app.kubernetes.io/name: cachelet
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cachelet
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

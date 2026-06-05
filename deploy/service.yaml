@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cachelet
+  labels:
+    app.kubernetes.io/name: cachelet
+  annotations:
+    # Fallback for annotation-based Prometheus discovery. Operator-based setups
+    # use the ServiceMonitor instead and ignore these; a cluster running only
+    # one of the two scrapes once, not twice.
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: /metrics
+spec:
+  selector:
+    app.kubernetes.io/name: cachelet
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
