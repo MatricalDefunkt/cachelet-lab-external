@@ -17,9 +17,10 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 
 // Server exposes a cache.Store over HTTP.
 type Server struct {
-	store  *cache.Store
-	logger *slog.Logger
-	mux    *http.ServeMux
+	store   *cache.Store
+	logger  *slog.Logger
+	mux     *http.ServeMux
+	metrics *metrics
 }
 
 // New returns a Server backed by store with its routes registered. If logger is
@@ -28,16 +29,27 @@ func New(store *cache.Store, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{store: store, logger: logger, mux: http.NewServeMux()}
+	s := &Server{store: store, logger: logger, mux: http.NewServeMux(), metrics: newMetrics(store)}
 	s.routes()
 	return s
 }
 
 func (s *Server) routes() {
-	s.mux.Handle("GET /cache/{key}", s.adapt(s.handleGet))
-	s.mux.Handle("PUT /cache/{key}", s.adapt(s.handleSet))
-	s.mux.Handle("DELETE /cache/{key}", s.adapt(s.handleDelete))
-	s.mux.Handle("GET /stats", s.adapt(s.handleStats))
+	s.handle("GET /cache/{key}", s.handleGet)
+	s.handle("PUT /cache/{key}", s.handleSet)
+	s.handle("DELETE /cache/{key}", s.handleDelete)
+	s.handle("GET /stats", s.handleStats)
+
+	// /metrics bypasses the adapt/instrument chain on purpose: scrapes are
+	// high-frequency and must not recurse through their own instrumentation.
+	s.mux.Handle("GET /metrics", s.metrics.handler)
+}
+
+// handle registers an apiHandler under a ServeMux pattern, wrapping it in the
+// standard middleware/error-translation chain and request metrics. The pattern
+// doubles as the low-cardinality route label for metrics.
+func (s *Server) handle(pattern string, h apiHandler) {
+	s.mux.Handle(pattern, s.adapt(pattern, h))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -49,8 +61,10 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) error {
 	key := r.PathValue("key")
 	v, ok := s.store.Get(key)
 	if !ok {
+		s.metrics.misses.Inc()
 		return fmt.Errorf("key %q: %w", key, errNotFound)
 	}
+	s.metrics.hits.Inc()
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, err := io.WriteString(w, v)
 	return err

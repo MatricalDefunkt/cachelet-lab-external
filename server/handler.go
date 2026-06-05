@@ -36,10 +36,13 @@ func statusFor(err error) int {
 }
 
 // adapt wires a business handler into an http.Handler: it applies the standard
-// middleware chain and translates a returned error into an HTTP response.
-// Cross-cutting behavior (e.g. logging) lives in the middleware listed here, not
-// inline in adapt.
-func (s *Server) adapt(h apiHandler) http.Handler {
+// middleware chain, translates a returned error into an HTTP response, and wraps
+// the result in request metrics. Cross-cutting behavior (e.g. logging) lives in
+// the middleware listed here, not inline in adapt.
+//
+// pattern is the ServeMux route (e.g. "GET /cache/{key}") and is used as the
+// metrics route label.
+func (s *Server) adapt(pattern string, h apiHandler) http.Handler {
 	// Standard middleware chain, applied to every route. Listed outermost
 	// first: the first entry runs before those below it.
 	chain := []middleware{
@@ -49,9 +52,12 @@ func (s *Server) adapt(h apiHandler) http.Handler {
 		h = chain[i](h)
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Error translation runs inside the metrics wrapper so the recorded status
+	// code reflects the response actually sent to the client.
+	translate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := h(w, r); err != nil {
 			http.Error(w, err.Error(), statusFor(err))
 		}
 	})
+	return s.metrics.instrument(pattern, translate)
 }
